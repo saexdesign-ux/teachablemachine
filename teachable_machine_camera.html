@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0f0f13;
+      color: #f0f0f0;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 1.1rem;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: #7df9b6;
+      opacity: 0.85;
+    }
+    #camera-wrapper {
+      position: relative;
+      border: 2px solid #7df9b6;
+      border-radius: 4px;
+      overflow: hidden;
+      box-shadow: 0 0 30px rgba(125, 249, 182, 0.15);
+    }
+    #camera canvas {
+      display: block;
+    }
+    #overlay {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid #7df9b633;
+      border-radius: 3px;
+      padding: 4px 10px;
+      font-size: 0.7rem;
+      color: #7df9b6;
+      letter-spacing: 0.1em;
+    }
+    #status {
+      font-size: 0.8rem;
+      color: #888;
+      letter-spacing: 0.15em;
+    }
+    #result-box {
+      background: #16161e;
+      border: 1px solid #2a2a3a;
+      border-radius: 6px;
+      padding: 16px 28px;
+      text-align: center;
+      min-width: 280px;
+    }
+    #label {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #7df9b6;
+      letter-spacing: 0.1em;
+      min-height: 2rem;
+    }
+    #confidence {
+      font-size: 0.75rem;
+      color: #555;
+      margin-top: 4px;
+      letter-spacing: 0.1em;
+    }
+    .bar-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 6px;
+      font-size: 0.7rem;
+    }
+    .bar-label { color: #888; width: 100px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bar-track { flex: 1; height: 6px; background: #2a2a3a; border-radius: 3px; overflow: hidden; }
+    .bar-fill { height: 100%; background: #7df9b6; border-radius: 3px; transition: width 0.2s ease; }
+    .bar-pct { color: #555; width: 36px; text-align: right; }
+    #bars { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Teachable Machine</h1>
+  <div id="camera-wrapper">
+    <div id="camera"></div>
+    <div id="overlay">LIVE</div>
+  </div>
+  <div id="status">Memuat model...</div>
+  <div id="result-box">
+    <div id="label">—</div>
+    <div id="confidence">Menunggu deteksi...</div>
+    <div id="bars"></div>
+  </div>
+
+  <script>
+    const MODEL_URL = "https://teachablemachine.withgoogle.com/models/QJn4u9mDQ/";
+    let model, webcam;
+
+    async function init() {
+      try {
+        document.getElementById("status").textContent = "Memuat model...";
+        const modelURL = MODEL_URL + "model.json";
+        const metadataURL = MODEL_URL + "metadata.json";
+        model = await tmImage.load(modelURL, metadataURL);
+
+        document.getElementById("status").textContent = "Menyalakan kamera...";
+        webcam = new tmImage.Webcam(300, 300, true); // width, height, flip
+        await webcam.setup();
+        await webcam.play();
+
+        document.getElementById("camera").appendChild(webcam.canvas);
+        document.getElementById("status").textContent = "Mendeteksi...";
+
+        // Buat bar untuk setiap kelas
+        const barsDiv = document.getElementById("bars");
+        for (let i = 0; i < model.getTotalClasses(); i++) {
+          const row = document.createElement("div");
+          row.className = "bar-row";
+          row.innerHTML = `
+            <span class="bar-label" id="blabel-${i}"></span>
+            <div class="bar-track"><div class="bar-fill" id="bfill-${i}" style="width:0%"></div></div>
+            <span class="bar-pct" id="bpct-${i}">0%</span>
+          `;
+          barsDiv.appendChild(row);
+        }
+
+        window.requestAnimationFrame(loop);
+      } catch (err) {
+        document.getElementById("status").textContent = "Error: " + err.message;
+        console.error(err);
+      }
+    }
+
+    async function loop() {
+      webcam.update();
+      await predict();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+      const prediction = await model.predict(webcam.canvas);
+
+      let highest = prediction[0];
+      for (let i = 1; i < prediction.length; i++) {
+        if (prediction[i].probability > highest.probability) {
+          highest = prediction[i];
+        }
+      }
+
+      // Update UI
+      document.getElementById("label").textContent = highest.className;
+      const pct = (highest.probability * 100).toFixed(1);
+      document.getElementById("confidence").textContent = `Kepercayaan: ${pct}%`;
+
+      // Update bars
+      for (let i = 0; i < prediction.length; i++) {
+        const p = prediction[i];
+        const w = (p.probability * 100).toFixed(1);
+        const labelEl = document.getElementById("blabel-" + i);
+        const fillEl = document.getElementById("bfill-" + i);
+        const pctEl = document.getElementById("bpct-" + i);
+        if (labelEl) labelEl.textContent = p.className;
+        if (fillEl) fillEl.style.width = w + "%";
+        if (pctEl) pctEl.textContent = w + "%";
+      }
+
+      // Kirim ke AppInventor jika ada
+      if (highest.probability > 0.9 && window.AppInventor) {
+        window.AppInventor.setWebViewString(highest.className);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
