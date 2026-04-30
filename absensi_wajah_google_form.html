@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a10;
+      color: #f0f0f0;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 20px;
+    }
+    h1 { font-size: 1rem; letter-spacing: 0.3em; text-transform: uppercase; color: #7df9b6; }
+    .sub { font-size: 0.65rem; color: #333; letter-spacing: 0.15em; }
+
+    /* START */
+    #start-screen { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    #start-btn {
+      background: #7df9b6; color: #0a0a10;
+      border: none; padding: 14px 44px;
+      font-family: 'Courier New', monospace;
+      font-size: 1rem; font-weight: bold;
+      letter-spacing: 0.2em; border-radius: 4px; cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    #start-btn:hover { opacity: 0.85; }
+    #error-msg { color: #f97d7d; font-size: 0.72rem; max-width: 300px; text-align: center; margin-top: 4px; }
+
+    /* MAIN */
+    #main-screen { display: none; flex-direction: column; align-items: center; gap: 12px; }
+
+    #camera-wrapper {
+      position: relative;
+      border: 2px solid #7df9b6; border-radius: 6px; overflow: hidden;
+      box-shadow: 0 0 30px rgba(125,249,182,0.12);
+    }
+    #camera canvas { display: block; }
+    #live-badge {
+      position: absolute; top: 8px; left: 8px;
+      background: rgba(0,0,0,0.7); border: 1px solid #7df9b644;
+      border-radius: 3px; padding: 3px 10px;
+      font-size: 0.62rem; color: #7df9b6; letter-spacing: 0.15em;
+    }
+
+    /* DETECTION BOX */
+    #detect-box {
+      width: 300px; background: #13131a;
+      border: 1px solid #1e1e2e; border-radius: 6px;
+      padding: 12px 18px; text-align: center;
+    }
+    #nis-label { font-size: 1.6rem; font-weight: bold; color: #7df9b6; letter-spacing: 0.12em; min-height: 2rem; }
+    #conf-label { font-size: 0.7rem; color: #444; margin-top: 2px; }
+    #bars { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
+    .bar-row { display: flex; align-items: center; gap: 8px; font-size: 0.65rem; }
+    .bar-name { color: #666; width: 90px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bar-track { flex: 1; height: 5px; background: #1e1e2e; border-radius: 3px; overflow: hidden; }
+    .bar-fill { height: 100%; background: #7df9b6; border-radius: 3px; transition: width 0.15s; }
+    .bar-pct { color: #333; width: 32px; text-align: right; }
+
+    /* STATUS KIRIM */
+    #send-box {
+      width: 300px; background: #0d0d12;
+      border: 1px solid #1a1a28; border-radius: 6px;
+      padding: 10px 16px;
+    }
+    .send-title { font-size: 0.6rem; color: #333; letter-spacing: 0.12em; margin-bottom: 6px; }
+    #send-status {
+      font-size: 0.8rem; color: #555;
+      display: flex; align-items: center; gap: 8px;
+    }
+    #send-status.success { color: #7df9b6; }
+    #send-status.sending { color: #f9d97d; }
+    #send-status.error { color: #f97d7d; }
+    #send-time { font-size: 0.6rem; color: #2a2a3a; margin-top: 4px; }
+
+    /* LOG RIWAYAT */
+    #log-box {
+      width: 300px; background: #0d0d12;
+      border: 1px solid #1a1a28; border-radius: 6px;
+      padding: 10px 16px; max-height: 110px; overflow-y: auto;
+    }
+    .log-title { font-size: 0.6rem; color: #333; letter-spacing: 0.12em; margin-bottom: 6px; }
+    .log-item { font-size: 0.68rem; color: #3a5a46; padding: 2px 0; border-bottom: 1px solid #12121a; }
+    .log-item:last-child { border-bottom: none; color: #7df9b6; }
+
+    #status-bar { font-size: 0.68rem; color: #333; letter-spacing: 0.12em; }
+
+    /* Cooldown ring */
+    #cooldown-ring {
+      position: absolute; bottom: 8px; right: 8px;
+      width: 28px; height: 28px;
+    }
+    #cooldown-ring circle {
+      fill: none; stroke: #7df9b622;
+      stroke-width: 3; stroke-dasharray: 75.4;
+      stroke-dashoffset: 75.4;
+      transform: rotate(-90deg); transform-origin: 50% 50%;
+      transition: stroke-dashoffset 0.3s;
+    }
+    #cooldown-ring circle.active { stroke: #7df9b6; }
+  </style>
+</head>
+<body>
+
+  <h1>Absensi Wajah</h1>
+  <div class="sub">Teachable Machine → Google Sheets</div>
+
+  <!-- START SCREEN -->
+  <div id="start-screen">
+    <div style="font-size:0.72rem;color:#333;letter-spacing:0.1em">Klik untuk mengaktifkan kamera</div>
+    <button id="start-btn" onclick="startApp()">▶ Mulai Absensi</button>
+    <div id="error-msg"></div>
+  </div>
+
+  <!-- MAIN SCREEN -->
+  <div id="main-screen">
+
+    <div id="camera-wrapper">
+      <div id="camera"></div>
+      <div id="live-badge">● LIVE</div>
+      <svg id="cooldown-ring" viewBox="0 0 28 28">
+        <circle id="ring-circle" cx="14" cy="14" r="12"/>
+      </svg>
+    </div>
+
+    <div id="status-bar">Memuat model...</div>
+
+    <div id="detect-box">
+      <div id="nis-label">—</div>
+      <div id="conf-label">Arahkan wajah ke kamera</div>
+      <div id="bars"></div>
+    </div>
+
+    <div id="send-box">
+      <div class="send-title">▸ STATUS PENGIRIMAN</div>
+      <div id="send-status">Menunggu deteksi...</div>
+      <div id="send-time"></div>
+    </div>
+
+    <div id="log-box">
+      <div class="log-title">▸ RIWAYAT ABSENSI</div>
+      <div id="log-list"></div>
+    </div>
+
+  </div>
+
+  <script>
+    const MODEL_URL   = "https://teachablemachine.withgoogle.com/models/QJn4u9mDQ/";
+    const FORM_URL    = "https://docs.google.com/forms/d/e/1FAIpQLSc4-R3MUVgyK8MOjhbeAqjIhzBdwVFoVlkv2q8XpSHBSLkvGA/formResponse";
+    const ENTRY_NIS   = "entry.1769842151";
+    const THRESHOLD   = 0.90;
+    const COOLDOWN_MS = 10000; // 10 detik cooldown per NIS agar tidak double submit
+
+    let model, webcam;
+    let sentLog   = {};   // { NIS: timestamp } — catat kapan terakhir dikirim
+    let isSending = false;
+
+    async function startApp() {
+      document.getElementById("start-screen").style.display = "none";
+      document.getElementById("main-screen").style.display = "flex";
+
+      try {
+        document.getElementById("status-bar").textContent = "Memuat model...";
+        model = await tmImage.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+
+        document.getElementById("status-bar").textContent = "Menyalakan kamera...";
+        webcam = new tmImage.Webcam(300, 300, true);
+        await webcam.setup();
+        await webcam.play();
+
+        document.getElementById("camera").appendChild(webcam.canvas);
+        document.getElementById("status-bar").textContent = "Mendeteksi wajah...";
+
+        // Buat bar tiap kelas
+        const barsDiv = document.getElementById("bars");
+        for (let i = 0; i < model.getTotalClasses(); i++) {
+          const row = document.createElement("div");
+          row.className = "bar-row";
+          row.innerHTML = `
+            <span class="bar-name" id="bn-${i}"></span>
+            <div class="bar-track"><div class="bar-fill" id="bf-${i}" style="width:0%"></div></div>
+            <span class="bar-pct" id="bp-${i}">0%</span>
+          `;
+          barsDiv.appendChild(row);
+        }
+
+        window.requestAnimationFrame(loop);
+      } catch (err) {
+        document.getElementById("main-screen").style.display = "none";
+        document.getElementById("start-screen").style.display = "flex";
+        document.getElementById("error-msg").textContent = "Error: " + err.message;
+      }
+    }
+
+    async function loop() {
+      webcam.update();
+      await predict();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+      const prediction = await model.predict(webcam.canvas);
+
+      // Cari tertinggi
+      let top = prediction[0];
+      for (let i = 1; i < prediction.length; i++) {
+        if (prediction[i].probability > top.probability) top = prediction[i];
+      }
+
+      const nis = top.className;
+      const pct = (top.probability * 100).toFixed(1);
+
+      // Update UI label
+      document.getElementById("nis-label").textContent = nis;
+      document.getElementById("conf-label").textContent = `Kepercayaan: ${pct}%`;
+
+      // Update bars
+      for (let i = 0; i < prediction.length; i++) {
+        const p = prediction[i];
+        const w = (p.probability * 100).toFixed(1);
+        const bn = document.getElementById("bn-" + i);
+        const bf = document.getElementById("bf-" + i);
+        const bp = document.getElementById("bp-" + i);
+        if (bn) bn.textContent = p.className;
+        if (bf) bf.style.width = w + "%";
+        if (bp) bp.textContent = w + "%";
+      }
+
+      // Kirim ke Google Form jika:
+      // 1. confidence >= 90%
+      // 2. tidak sedang mengirim
+      // 3. NIS ini belum dikirim dalam COOLDOWN_MS terakhir
+      if (top.probability >= THRESHOLD && !isSending) {
+        const now = Date.now();
+        const lastSentTime = sentLog[nis] || 0;
+
+        if (now - lastSentTime > COOLDOWN_MS) {
+          await kirimKeGoogleForm(nis);
+        } else {
+          // Tampilkan sisa cooldown
+          const sisaDetik = Math.ceil((COOLDOWN_MS - (now - lastSentTime)) / 1000);
+          updateRing(1 - (now - lastSentTime) / COOLDOWN_MS);
+          setStatus("sending", `⏳ Cooldown ${sisaDetik}s (${nis} sudah tercatat)`);
+        }
+      } else {
+        updateRing(0);
+      }
+
+      // Kirim ke App Inventor juga jika ada
+      if (top.probability >= THRESHOLD && window.AppInventor) {
+        window.AppInventor.setWebViewString(nis);
+      }
+    }
+
+    async function kirimKeGoogleForm(nis) {
+      isSending = true;
+      setStatus("sending", `⏳ Mengirim NIS: ${nis}...`);
+      updateRing(1);
+
+      try {
+        // Kirim via iframe (no-CORS workaround untuk Google Form)
+        const params = new URLSearchParams();
+        params.append(ENTRY_NIS, nis);
+
+        const iframe = document.createElement("iframe");
+        iframe.style.display = "none";
+        iframe.src = FORM_URL + "?" + params.toString();
+        document.body.appendChild(iframe);
+
+        // Tunggu sebentar lalu anggap berhasil (Google Form tidak beri response CORS)
+        await new Promise(r => setTimeout(r, 2000));
+        document.body.removeChild(iframe);
+
+        // Catat waktu pengiriman
+        sentLog[nis] = Date.now();
+
+        const timeStr = new Date().toLocaleTimeString("id-ID");
+        setStatus("success", `✓ Terkirim: ${nis}`);
+        document.getElementById("send-time").textContent = timeStr;
+
+        // Tambah ke riwayat
+        tambahLog(nis, timeStr);
+
+      } catch (err) {
+        setStatus("error", "✗ Gagal kirim: " + err.message);
+      } finally {
+        isSending = false;
+        setTimeout(() => updateRing(0), 500);
+      }
+    }
+
+    function setStatus(type, msg) {
+      const el = document.getElementById("send-status");
+      el.className = type;
+      el.textContent = msg;
+    }
+
+    function tambahLog(nis, time) {
+      const list = document.getElementById("log-list");
+      const item = document.createElement("div");
+      item.className = "log-item";
+      item.textContent = `${time} — NIS ${nis}`;
+      list.insertBefore(item, list.firstChild);
+
+      // Batas 20 entri
+      while (list.children.length > 20) list.removeChild(list.lastChild);
+    }
+
+    function updateRing(fraction) {
+      const circle = document.getElementById("ring-circle");
+      const circumference = 75.4;
+      circle.style.strokeDashoffset = circumference - fraction * circumference;
+      circle.className = fraction > 0 ? "active" : "";
+    }
+  </script>
+</body>
+</html>
