@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a10; color: #f0f0f0;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px; padding: 20px;
+    }
+    h1 { font-size: 1rem; letter-spacing: 0.3em; text-transform: uppercase; color: #7df9b6; }
+    .sub { font-size: 0.65rem; color: #444; letter-spacing: 0.15em; }
+
+    #start-screen { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    #start-btn {
+      background: #7df9b6; color: #0a0a10;
+      border: none; padding: 14px 44px;
+      font-family: 'Courier New', monospace;
+      font-size: 1rem; font-weight: bold;
+      letter-spacing: 0.2em; border-radius: 4px; cursor: pointer;
+    }
+
+    #main-screen { display: none; flex-direction: column; align-items: center; gap: 12px; width: 100%; max-width: 340px; }
+
+    #camera-wrapper {
+      position: relative;
+      border: 2px solid #7df9b6; border-radius: 6px; overflow: hidden;
+    }
+    #camera canvas { display: block; width: 100% !important; height: auto !important; }
+    
+    .info-card {
+      width: 100%; background: #13131a;
+      border: 1px solid #1e1e2e; border-radius: 8px;
+      padding: 14px; text-align: center;
+    }
+    .card-label { font-size: 0.6rem; color: #555; letter-spacing: 0.2em; text-transform: uppercase; }
+    .card-value { font-size: 1.8rem; font-weight: bold; margin: 5px 0; }
+    .green { color: #7df9b6; }
+    .yellow { color: #f9d97d; }
+    .dim { color: #333; }
+
+    #log-box {
+      width: 100%; background: #0d0d12;
+      border: 1px solid #1a1a28; border-radius: 8px;
+      padding: 10px; max-height: 120px; overflow-y: auto;
+    }
+    .log-item { font-size: 0.7rem; color: #555; padding: 4px 0; border-bottom: 1px solid #12121a; }
+  </style>
+</head>
+<body>
+
+  <h1>ABSENSI WAJAH</h1>
+  <div class="sub">V.2.0 · SISTEM OTOMATIS</div>
+
+  <div id="start-screen">
+    <button id="start-btn" onclick="startApp()">MULAI KAMERA</button>
+  </div>
+
+  <div id="main-screen">
+    <div id="camera-wrapper">
+      <div id="camera"></div>
+    </div>
+
+    <div class="info-card">
+      <div class="card-label">IDENTITAS TERDETEKSI</div>
+      <div class="card-value green" id="nis-label">—</div>
+      <div id="conf-label" style="font-size: 0.7rem; color:#444">Menunggu...</div>
+    </div>
+
+    <div class="info-card" style="padding: 10px;">
+      <div class="card-label">STATUS PENGIRIMAN</div>
+      <div class="card-value" id="send-status" style="font-size: 1.2rem;">READY</div>
+    </div>
+
+    <div id="log-box">
+      <div id="log-list"></div>
+    </div>
+  </div>
+
+  <script>
+    // --- KONFIGURASI ---
+    const MODEL_URL  = "https://teachablemachine.withgoogle.com/models/FQRrdIwRj/";
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxDRMjBRcqeajqWcRrn2zc5BBInI-jAuPLmgnGl3sfwAgSpEfBAgrpP-bGzGbpD0h1WWQ/exec";
+    const THRESHOLD  = 0.95; // Kepercayaan minimal 95%
+    const COOLDOWN   = 15000; // 15 detik jeda per siswa
+
+    let model, webcam, lastSent = {}, isProcessing = false;
+
+    async function startApp() {
+      document.getElementById("start-screen").style.display = "none";
+      document.getElementById("main-screen").style.display = "flex";
+      
+      try {
+        model = await tmImage.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+        webcam = new tmImage.Webcam(300, 300, true); 
+        await webcam.setup();
+        await webcam.play();
+        document.getElementById("camera").appendChild(webcam.canvas);
+        window.requestAnimationFrame(loop);
+      } catch (e) {
+        alert("Gagal akses kamera: " + e);
+      }
+    }
+
+    async function loop() {
+      webcam.update();
+      await predict();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+      const prediction = await model.predict(webcam.canvas);
+      let top = prediction.reduce((prev, current) => (prev.probability > current.probability) ? prev : current);
+
+      const nis = top.className;
+      const prob = top.probability;
+
+      document.getElementById("nis-label").textContent = nis;
+      document.getElementById("conf-label").textContent = (prob * 100).toFixed(1) + "% MATCH";
+
+      // Logika Pengiriman
+      if (prob >= THRESHOLD && !isProcessing) {
+        const now = Date.now();
+        if (!lastSent[nis] || (now - lastSent[nis] > COOLDOWN)) {
+          kirimData(nis);
+        } else {
+          updateStatus("yellow", "COOLDOWN");
+        }
+      }
+    }
+
+    function kirimData(nis) {
+      isProcessing = true;
+      updateStatus("yellow", "SENDING...");
+
+      const finalUrl = `${SCRIPT_URL}?nis=${encodeURIComponent(nis)}&t=${Date.now()}`;
+
+      // Metode fetch mode no-cors: Paling ampuh untuk Apps Script di WebView
+      fetch(finalUrl, { mode: 'no-cors' })
+        .then(() => {
+          lastSent[nis] = Date.now();
+          updateStatus("green", "SUCCESS");
+          tambahLog(nis);
+          
+          // Kirim sinyal ke MIT App Inventor (jika diperlukan)
+          if (window.AppInventor) {
+            window.AppInventor.setWebViewString("TERCATAT:" + nis);
+          }
+          
+          setTimeout(() => { isProcessing = false; }, 3000);
+        })
+        .catch(err => {
+          updateStatus("red", "FAILED");
+          isProcessing = false;
+        });
+    }
+
+    function updateStatus(cls, txt) {
+      const el = document.getElementById("send-status");
+      el.className = "card-value " + cls;
+      el.textContent = txt;
+    }
+
+    function tambahLog(nis) {
+      const list = document.getElementById("log-list");
+      const div = document.createElement("div");
+      div.className = "log-item";
+      div.textContent = `${new Date().toLocaleTimeString()} - ${nis} Berhasil`;
+      list.insertBefore(div, list.firstChild);
+    }
+  </script>
+</body>
+</html>
