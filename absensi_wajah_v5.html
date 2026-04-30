@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a10; color: #f0f0f0;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px; padding: 20px;
+    }
+    h1 { font-size: 1rem; letter-spacing: 0.3em; text-transform: uppercase; color: #7df9b6; }
+    .sub { font-size: 0.65rem; color: #333; letter-spacing: 0.15em; }
+
+    /* START */
+    #start-screen { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    #start-btn {
+      background: #7df9b6; color: #0a0a10;
+      border: none; padding: 14px 44px;
+      font-family: 'Courier New', monospace;
+      font-size: 1rem; font-weight: bold;
+      letter-spacing: 0.2em; border-radius: 4px; cursor: pointer;
+    }
+    #start-btn:hover { opacity: 0.85; }
+    #error-msg { color: #f97d7d; font-size: 0.72rem; max-width: 300px; text-align: center; }
+
+    /* MAIN */
+    #main-screen { display: none; flex-direction: column; align-items: center; gap: 12px; width: 100%; max-width: 340px; }
+
+    #camera-wrapper {
+      position: relative;
+      border: 2px solid #7df9b6; border-radius: 6px; overflow: hidden;
+      box-shadow: 0 0 30px rgba(125,249,182,0.12);
+    }
+    #camera canvas { display: block; }
+    #live-badge {
+      position: absolute; top: 8px; left: 8px;
+      background: rgba(0,0,0,0.7); border: 1px solid #7df9b644;
+      border-radius: 3px; padding: 3px 10px;
+      font-size: 0.62rem; color: #7df9b6; letter-spacing: 0.15em;
+    }
+
+    /* INFO CARDS */
+    .info-card {
+      width: 100%; background: #13131a;
+      border: 1px solid #1e1e2e; border-radius: 8px;
+      padding: 14px 18px; text-align: center;
+    }
+    .card-label {
+      font-size: 0.62rem; color: #444;
+      letter-spacing: 0.2em; text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .card-value {
+      font-size: 2rem; font-weight: bold;
+      letter-spacing: 0.1em; line-height: 1.1;
+      min-height: 2.4rem;
+    }
+    .card-value.green  { color: #7df9b6; }
+    .card-value.yellow { color: #f9d97d; }
+    .card-value.red    { color: #f97d7d; }
+    .card-value.dim    { color: #333; font-size: 1.2rem; }
+    .card-sub {
+      font-size: 0.65rem; color: #444; margin-top: 4px;
+    }
+
+    /* STATUS ROW */
+    #status-row {
+      width: 100%; display: flex; gap: 10px;
+    }
+    #status-row .info-card { flex: 1; }
+    #status-row .card-value { font-size: 1.3rem; }
+
+    /* LOG */
+    #log-box {
+      width: 100%; background: #0d0d12;
+      border: 1px solid #1a1a28; border-radius: 8px;
+      padding: 10px 16px; max-height: 100px; overflow-y: auto;
+    }
+    .box-title { font-size: 0.58rem; color: #2a2a3a; letter-spacing: 0.12em; margin-bottom: 6px; text-transform: uppercase; }
+    .log-item { font-size: 0.68rem; color: #3a5a46; padding: 3px 0; border-bottom: 1px solid #12121a; }
+    .log-item:first-child { color: #7df9b6; }
+    .log-item:last-child { border-bottom: none; }
+
+    #status-bar { font-size: 0.65rem; color: #2a2a3a; letter-spacing: 0.12em; }
+
+    /* FOOTER */
+    #footer {
+      margin-top: 4px;
+      text-align: center;
+      font-size: 0.6rem;
+      color: #2a2a3a;
+      letter-spacing: 0.08em;
+      line-height: 1.6;
+    }
+    #footer span {
+      color: #3a5a46;
+      font-weight: bold;
+      letter-spacing: 0.12em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Absensi Wajah</h1>
+  <div class="sub">Teachable Machine → Google Sheets</div>
+
+  <!-- START -->
+  <div id="start-screen">
+    <div style="font-size:0.72rem;color:#444;letter-spacing:0.1em">Klik untuk mengaktifkan kamera</div>
+    <button id="start-btn" onclick="startApp()">▶ Mulai Absensi</button>
+    <div id="error-msg"></div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main-screen">
+
+    <!-- Kamera -->
+    <div id="camera-wrapper">
+      <div id="camera"></div>
+      <div id="live-badge">● LIVE</div>
+    </div>
+    <div id="status-bar">Memuat model...</div>
+
+    <!-- NIS -->
+    <div class="info-card">
+      <div class="card-label">NIS Terdeteksi</div>
+      <div class="card-value green" id="nis-label">—</div>
+      <div class="card-sub" id="conf-label">Arahkan wajah ke kamera</div>
+    </div>
+
+    <!-- Terdeteksi & Terkirim -->
+    <div id="status-row">
+      <div class="info-card">
+        <div class="card-label">Terdeteksi</div>
+        <div class="card-value dim" id="detect-status">—</div>
+      </div>
+      <div class="info-card">
+        <div class="card-label">Terkirim</div>
+        <div class="card-value dim" id="send-status">—</div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div id="log-box">
+      <div class="box-title">▸ Riwayat Absensi Sesi Ini</div>
+      <div id="log-list"></div>
+    </div>
+
+    <!-- Footer -->
+    <div id="footer">
+      Created by:<br>
+      <span>Class XI · SMA Al-Azhar Plus Bogor</span>
+    </div>
+
+  </div>
+
+  <script>
+    const MODEL_URL   = "https://teachablemachine.withgoogle.com/models/FQRrdIwRj/";
+    const SCRIPT_URL  = "https://script.google.com/macros/s/AKfycbxN8QGGNaINj0i7q9CvhdihfHcniXBAyiXxhYWrA52BTNNIsTidG3yBQzsaIzoNtRY_/exec";
+    const THRESHOLD   = 0.90;
+    const COOLDOWN_MS = 10000;
+
+    let model, webcam;
+    let sentLog   = {};
+    let isSending = false;
+
+    async function startApp() {
+      document.getElementById("start-screen").style.display = "none";
+      document.getElementById("main-screen").style.display = "flex";
+      try {
+        document.getElementById("status-bar").textContent = "Memuat model...";
+        model = await tmImage.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+
+        document.getElementById("status-bar").textContent = "Menyalakan kamera...";
+        webcam = new tmImage.Webcam(300, 300, true);
+        await webcam.setup();
+        await webcam.play();
+
+        document.getElementById("camera").appendChild(webcam.canvas);
+        document.getElementById("status-bar").textContent = "Mendeteksi wajah...";
+        window.requestAnimationFrame(loop);
+      } catch (err) {
+        document.getElementById("main-screen").style.display = "none";
+        document.getElementById("start-screen").style.display = "flex";
+        document.getElementById("error-msg").textContent = "Error: " + err.message;
+      }
+    }
+
+    async function loop() {
+      webcam.update();
+      await predict();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+      const prediction = await model.predict(webcam.canvas);
+
+      let top = prediction[0];
+      for (let i = 1; i < prediction.length; i++) {
+        if (prediction[i].probability > top.probability) top = prediction[i];
+      }
+
+      const nis = top.className;
+      const pct = (top.probability * 100).toFixed(1);
+
+      // Update NIS
+      document.getElementById("nis-label").textContent = nis;
+      document.getElementById("conf-label").textContent = `Kepercayaan: ${pct}%`;
+
+      // Update status TERDETEKSI
+      const detectEl = document.getElementById("detect-status");
+      if (top.probability >= THRESHOLD) {
+        detectEl.textContent = "✓ YA";
+        detectEl.className   = "card-value green";
+      } else {
+        detectEl.textContent = "...";
+        detectEl.className   = "card-value dim";
+      }
+
+      // Kirim jika memenuhi syarat
+      if (top.probability >= THRESHOLD && !isSending) {
+        const now          = Date.now();
+        const lastSentTime = sentLog[nis] || 0;
+        if (now - lastSentTime > COOLDOWN_MS) {
+          kirimKeSheets(nis);
+        } else {
+          const sisa = Math.ceil((COOLDOWN_MS - (now - lastSentTime)) / 1000);
+          setSendStatus("yellow", `⏳ ${sisa}s`);
+        }
+      }
+
+      if (top.probability >= THRESHOLD && window.AppInventor) {
+        window.AppInventor.setWebViewString(nis);
+      }
+    }
+
+    async function kirimKeSheets(nis) {
+      isSending = true;
+      setSendStatus("yellow", "⏳ ...");
+
+      const berhasil = await coba_XHR(nis);
+      if (!berhasil) await coba_fetch(nis);
+    }
+
+    function coba_XHR(nis) {
+      return new Promise((resolve) => {
+        try {
+          const xhr = new XMLHttpRequest();
+          xhr.open("GET", SCRIPT_URL + "?nis=" + encodeURIComponent(nis) + "&t=" + Date.now(), true);
+          xhr.timeout = 5000;
+          xhr.onload    = () => { kirimBerhasil(nis); resolve(true); };
+          xhr.onerror   = () => { kirimBerhasil(nis); resolve(true); };
+          xhr.ontimeout = () => resolve(false);
+          xhr.send();
+        } catch(e) { resolve(false); }
+      });
+    }
+
+    function coba_fetch(nis) {
+      return fetch(SCRIPT_URL + "?nis=" + encodeURIComponent(nis) + "&t=" + Date.now(), {
+        method: "GET", mode: "no-cors", cache: "no-cache"
+      })
+      .then(() => kirimBerhasil(nis))
+      .catch(() => setSendStatus("red", "✗ Gagal"));
+    }
+
+    function kirimBerhasil(nis) {
+      sentLog[nis] = Date.now();
+      const timeStr = new Date().toLocaleTimeString("id-ID");
+      setSendStatus("green", "✓ OK");
+      tambahLog(nis, timeStr);
+      isSending = false;
+    }
+
+    function setSendStatus(color, msg) {
+      const el = document.getElementById("send-status");
+      el.className   = "card-value " + color;
+      el.textContent = msg;
+    }
+
+    function tambahLog(nis, time) {
+      const list = document.getElementById("log-list");
+      const item = document.createElement("div");
+      item.className   = "log-item";
+      item.textContent = `${time} — NIS: ${nis}`;
+      list.insertBefore(item, list.firstChild);
+      while (list.children.length > 20) list.removeChild(list.lastChild);
+    }
+  </script>
+</body>
+</html>
