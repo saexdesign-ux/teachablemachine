@@ -1,0 +1,279 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Absensi Siswa</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.5/dist/teachablemachine-image.min.js"></script>
+
+<style>
+body {
+    margin:0;
+    padding:20px;
+    background:#0f172a;
+    color:white;
+    font-family:Arial,sans-serif;
+    text-align:center;
+}
+.container {
+    max-width:500px;
+    margin:auto;
+}
+button {
+    padding:14px 24px;
+    border:none;
+    border-radius:12px;
+    background:#22c55e;
+    color:white;
+    font-size:18px;
+    cursor:pointer;
+}
+canvas {
+    margin-top:20px;
+    border-radius:20px;
+    border:4px solid #22c55e;
+    width:320px !important;
+    height:320px !important;
+    background:black;
+}
+#hasil {
+    margin-top:20px;
+    font-size:24px;
+    font-weight:bold;
+    color:#22c55e;
+}
+#status {
+    margin-top:15px;
+    padding:12px;
+    border-radius:12px;
+    background:#1e293b;
+    color:#facc15;
+    font-size:16px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+<h1>AI Absensi Siswa</h1>
+
+<button id="startBtn">Aktifkan Kamera</button>
+
+<div id="status">Menunggu kamera...</div>
+
+<div id="kamera"></div>
+
+<div id="hasil">Belum ada deteksi</div>
+</div>
+
+<script>
+
+const MODEL_URL = "https://teachablemachine.withgoogle.com/models/FQRrdIwRj/";
+const API_URL = "https://script.google.com/macros/s/AKfycbyfw5SkGuXofC5jtfWICX5jFhybrlOnwU5EMiSdcVtCCiOxOmjSEpuwt9cfbpgNM1v3/exec";
+
+const MIN_CONFIDENCE = 0.95;
+const COOLDOWN = 300000;
+
+let model;
+let webcam;
+
+const riwayatKirim = {};
+
+document.getElementById("startBtn")
+.addEventListener("click", startCamera);
+
+async function startCamera() {
+
+    try {
+
+        setStatus("Loading AI...");
+
+        const modelURL = MODEL_URL + "model.json";
+        const metadataURL = MODEL_URL + "metadata.json";
+
+        model = await tmImage.load(
+            modelURL,
+            metadataURL
+        );
+
+        webcam = new tmImage.Webcam(
+            320,
+            320,
+            true
+        );
+
+        setStatus("Mengaktifkan kamera...");
+
+        await webcam.setup();
+        await webcam.play();
+
+        document.getElementById("kamera")
+        .appendChild(webcam.canvas);
+
+        setStatus("Kamera aktif");
+
+        window.requestAnimationFrame(loop);
+
+    } catch(err) {
+
+        console.log(err);
+
+        setStatus(
+            "ERROR : " + err.message
+        );
+    }
+}
+
+function setStatus(text) {
+
+    document.getElementById("status")
+    .innerHTML = text;
+}
+
+async function loop() {
+
+    webcam.update();
+
+    await predict();
+
+    window.requestAnimationFrame(loop);
+}
+
+async function predict() {
+
+    try {
+
+        const predictions =
+            await model.predict(
+                webcam.canvas
+            );
+
+        let best = predictions[0];
+
+        for(let i=1;i<predictions.length;i++) {
+
+            if(
+                predictions[i].probability >
+                best.probability
+            ) {
+                best = predictions[i];
+            }
+        }
+
+        const label =
+            best.className;
+
+        const confidence =
+            (
+                best.probability * 100
+            ).toFixed(1);
+
+        document.getElementById("hasil")
+        .innerHTML =
+        label + " (" + confidence + "%)";
+
+        if(best.probability >= MIN_CONFIDENCE) {
+
+            const sekarang = Date.now();
+
+            if(!riwayatKirim[label]) {
+
+                await kirimData(label);
+
+                riwayatKirim[label] =
+                    sekarang;
+
+                return;
+            }
+
+            const selisih =
+                sekarang -
+                riwayatKirim[label];
+
+            if(selisih > COOLDOWN) {
+
+                await kirimData(label);
+
+                riwayatKirim[label] =
+                    sekarang;
+
+            } else {
+
+                const sisa =
+                    Math.ceil(
+                        (
+                            COOLDOWN -
+                            selisih
+                        ) / 1000
+                    );
+
+                setStatus(
+                    "⏳ " +
+                    label +
+                    " sudah absensi. Tunggu " +
+                    sisa +
+                    " detik"
+                );
+            }
+        }
+
+    } catch(err) {
+
+        console.log(err);
+
+        setStatus("Predict Error");
+    }
+}
+
+async function kirimData(label) {
+
+    try {
+
+        setStatus("Mengirim data...");
+
+        const response =
+            await fetch(
+                API_URL,
+                {
+                    method:"POST",
+                    body:new URLSearchParams({
+                        nis:label
+                    })
+                }
+            );
+
+        const hasil =
+            await response.text();
+
+        if(hasil.includes("SUCCESS")) {
+
+            setStatus(
+                "✅ BERHASIL TERKIRIM : " +
+                label
+            );
+
+        } else {
+
+            setStatus(
+                "⚠️ Data terkirim"
+            );
+        }
+
+    } catch(err) {
+
+        console.log(err);
+
+        setStatus(
+            "❌ Error koneksi"
+        );
+    }
+}
+
+</script>
+
+</body>
+</html>
